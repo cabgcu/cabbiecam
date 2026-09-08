@@ -173,7 +173,7 @@
   <!-- App Logic -->
   <script>
     const supabaseUrl = 'https://nmmshjdknmuzpgpquwec.supabase.co';
-    const supabaseKey = 'sb_secret_cYvzi8CeyE7q6ZY7BERLYA_fu1R0opZ';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5tbXNoamRrbm11enBncHF1d2VjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExMTk5MTIsImV4cCI6MjA4NjY5NTkxMn0.5uv8Q93mg_Gg3rH9gVpl1d9W6uEsySLL5hu5pdBtJNE';
     const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
     const cameraPreview = document.getElementById('cameraPreview');
@@ -249,7 +249,6 @@
       statusText.innerText = "Ready for Video (Max 15s)";
       recordingDot.classList.remove('hidden');
     });
-
 
     // --- Media Capture & Upload ---
     shutterBtn.addEventListener('click', () => {
@@ -387,7 +386,6 @@
       if (settings && settings.is_revealed) {
         shutterBtn.disabled = true;
         statusText.innerText = "Camera locked. The vault is open!";
-        // Stop the camera to save battery since they can't shoot anyway
         if(stream) stream.getTracks().forEach(track => track.stop()); 
         showGallery(); 
         return;
