@@ -106,7 +106,7 @@
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
 
-  <!-- Full Screen Flash Overlay (Invisible by default, triggered in JS) -->
+  <!-- Full Screen Flash Overlay -->
   <div id="flashOverlay" class="fixed inset-0 bg-white z-50 opacity-0 pointer-events-none transition-opacity duration-150"></div>
 
   <!-- Ambient Glows -->
@@ -126,7 +126,6 @@
 
     <!-- Viewfinder -->
     <div class="w-full aspect-square bg-black/60 rounded-2xl mb-8 border border-white/5 shadow-inner flex flex-col justify-center items-center relative overflow-hidden">
-      <!-- Fun subtle background pattern in viewfinder -->
       <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]"></div>
       
       <div class="w-16 h-16 border-2 border-white/20 rounded-full flex items-center justify-center relative z-10">
@@ -143,7 +142,7 @@
     <input type="file" accept="image/*" capture="environment" id="photoInput" class="hidden" />
     <input type="file" accept="video/*" capture="environment" id="videoInput" class="hidden" />
 
-    <!-- Shutter Button with CAB Logo & Pop Animation -->
+    <!-- Shutter Button -->
     <button id="shutterBtn" class="shutter-pop w-24 h-24 bg-neutral-900 rounded-full border-2 border-white/10 shadow-[0_0_25px_rgba(168,85,247,0.3)] flex items-center justify-center mb-6 relative overflow-hidden group">
       <div id="shutterInner" class="w-20 h-20 bg-gradient-to-br from-neutral-700 to-neutral-900 rounded-full border border-white/10 group-active:from-neutral-800 group-active:to-neutral-950 transition-colors flex items-center justify-center">
         <img src="https://i.imgur.com/p2qZOL5.png" alt="CAB Logo" class="w-12 h-12 object-contain opacity-90 drop-shadow-lg pointer-events-none" />
@@ -158,20 +157,217 @@
 
   </main>
 
-  <!-- Gallery/Reveal Section (Hidden by default, triggered by admin vault toggle) -->
+  <!-- Gallery/Reveal Section -->
   <section id="gallerySection" class="hidden w-full max-w-md mt-8 pb-12">
     <div class="glass-panel rounded-[2rem] p-6 text-center">
       <h2 class="text-2xl font-bold mb-2 text-white tracking-wider uppercase">The Vault is Open 🔓</h2>
       <p class="text-white/40 text-xs mb-8 uppercase tracking-widest">End of Year Memories</p>
-      
-      <div id="photoGrid" class="grid grid-cols-2 gap-4">
-        <!-- Media injected here via JS -->
-      </div>
+      <div id="photoGrid" class="grid grid-cols-2 gap-4"></div>
     </div>
   </section>
 
-  <!-- Supabase & App Logic -->
+  <!-- Supabase Library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
+  
+  <!-- App Logic (Replaces app.js) -->
+  <script>
+    const supabaseUrl = 'https://nmmshjdknmuzpgpquwec.supabase.co';
+    const supabaseKey = 'sb_secret_cYvzi8CeyE7q6ZY7BERLYA_fu1R0opZ';
+    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+    const photoInput = document.getElementById('photoInput');
+    const videoInput = document.getElementById('videoInput');
+    const shutterBtn = document.getElementById('shutterBtn');
+    const shutterInner = document.getElementById('shutterInner');
+    const shotsLeftEl = document.getElementById('shotsLeft');
+    const statusText = document.getElementById('statusText');
+    const modePhoto = document.getElementById('modePhoto');
+    const modeVideo = document.getElementById('modeVideo');
+    const gallerySection = document.getElementById('gallerySection');
+    const photoGrid = document.getElementById('photoGrid');
+
+    const DAILY_LIMIT = 5;
+    let currentMode = 'image';
+
+    modePhoto.addEventListener('click', () => {
+      currentMode = 'image';
+      modePhoto.classList.add('toggle-active');
+      modePhoto.classList.remove('text-white/40');
+      modeVideo.classList.remove('toggle-active');
+      modeVideo.classList.add('text-white/40');
+      shutterInner.classList.replace('from-red-900', 'from-neutral-700'); 
+      statusText.innerText = "Say Cheese ✨";
+    });
+
+    modeVideo.addEventListener('click', () => {
+      currentMode = 'video';
+      modeVideo.classList.add('toggle-active');
+      modeVideo.classList.remove('text-white/40');
+      modePhoto.classList.remove('toggle-active');
+      modePhoto.classList.add('text-white/40');
+      shutterInner.classList.replace('from-neutral-700', 'from-red-900'); 
+      statusText.innerText = "Ready for Video (Max 15s)";
+    });
+
+    async function init() {
+      // NOTE: If you are not logging users in yet, this auth check will fail. 
+      // You will need to build a login screen for the daily limit to work.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn("User is not logged in. Auth is required to post.");
+        statusText.innerText = "Please log in to snap.";
+        return; 
+      }
+
+      const { data: settings } = await supabase.from('app_settings').select('is_revealed').eq('id', 1).single();
+
+      if (settings && settings.is_revealed) {
+        shutterBtn.disabled = true;
+        statusText.innerText = "Camera locked. The vault is open!";
+        showGallery(); 
+        return;
+      }
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const { count } = await supabase
+        .from('photos')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', startOfDay.toISOString());
+
+      const shotsLeft = DAILY_LIMIT - (count || 0);
+      shotsLeftEl.innerText = shotsLeft;
+
+      if (shotsLeft <= 0) {
+        shutterBtn.disabled = true;
+        statusText.innerText = "Out of film for today!";
+      }
+    }
+
+    shutterBtn.addEventListener('click', () => {
+      if (shutterBtn.disabled) return;
+      if (currentMode === 'image') photoInput.click();
+      else videoInput.click();
+    });
+
+    function getVideoDuration(file) {
+      return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = function() {
+          window.URL.revokeObjectURL(video.src);
+          resolve(video.duration);
+        }
+        video.src = URL.createObjectURL(file);
+      });
+    }
+
+    async function handleMediaUpload(e, mediaType) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const flash = document.getElementById('flashOverlay');
+      if(flash) {
+        flash.style.opacity = '1';
+        setTimeout(() => { flash.style.opacity = '0'; }, 150); 
+      }
+
+      if (mediaType === 'video') {
+        statusText.innerText = "Checking length...";
+        const duration = await getVideoDuration(file);
+        if (duration > 16) { 
+          statusText.innerText = `Clip was ${Math.round(duration)}s. 15s MAX! Try again.`;
+          videoInput.value = ''; 
+          return;
+        }
+      }
+
+      statusText.innerText = "Developing...";
+      shutterBtn.disabled = true;
+
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if(!user) throw new Error("Must be logged in");
+        
+        const ext = mediaType === 'video' ? 'mp4' : 'jpg'; 
+        const fileName = `${user.id}-${Date.now()}.${ext}`;
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('disposable_snaps')
+          .upload(fileName, file);
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from('disposable_snaps')
+          .getPublicUrl(fileName);
+
+        await supabase.from('photos').insert([
+          { 
+            user_id: user.id, 
+            image_url: publicUrlData.publicUrl,
+            media_type: mediaType
+          }
+        ]);
+
+        statusText.innerText = "Saved to the vault!";
+        setTimeout(() => {
+          statusText.innerText = currentMode === 'image' ? "Say Cheese ✨" : "Ready for Video (Max 15s)";
+          init(); 
+        }, 1500); 
+
+      } catch (error) {
+        console.error('Upload failed:', error);
+        statusText.innerText = "Error saving. Try again.";
+        shutterBtn.disabled = false;
+      }
+    }
+
+    photoInput.addEventListener('change', (e) => handleMediaUpload(e, 'image'));
+    videoInput.addEventListener('change', (e) => handleMediaUpload(e, 'video'));
+
+    async function showGallery() {
+      gallerySection.classList.remove('hidden');
+      
+      const { data: vaultMedia, error } = await supabase
+        .from('photos')
+        .select('image_url, media_type, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Error fetching the vault:", error);
+        return;
+      }
+
+      photoGrid.innerHTML = vaultMedia.map(media => {
+        const dateStr = new Date(media.created_at).toLocaleDateString();
+        
+        if (media.media_type === 'video') {
+          return `
+            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl relative border border-white/5 bg-white/5">
+              <div class="absolute top-4 right-4 bg-red-500 w-2 h-2 rounded-full shadow-[0_0_8px_rgba(239,68,68,1)] z-10"></div>
+              <div class="film-overlay rounded-lg h-full">
+                <video src="${media.image_url}" class="w-full h-auto rounded-lg object-cover aspect-[3/4] bg-black/40 disposable-filter" autoplay loop muted playsinline></video>
+              </div>
+              <p class="text-xs text-white/50 font-bold text-center mt-3 uppercase tracking-wider">${dateStr}</p>
+            </div>
+          `;
+        } else {
+          return `
+            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl border border-white/5 bg-white/5">
+              <div class="film-overlay rounded-lg h-full">
+                <img src="${media.image_url}" class="w-full h-auto rounded-lg object-cover aspect-[3/4] bg-black/40 disposable-filter" loading="lazy" />
+              </div>
+              <p class="text-xs text-white/50 font-bold text-center mt-3 uppercase tracking-wider">${dateStr}</p>
+            </div>
+          `;
+        }
+      }).join('');
+    }
+
+    init();
+  </script>
 </body>
 </html>
