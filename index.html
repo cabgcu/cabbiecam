@@ -169,11 +169,13 @@
   <!-- Supabase Library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
-  <!-- App Logic (Replaces app.js) -->
+  <!-- App Logic -->
   <script>
     const supabaseUrl = 'https://nmmshjdknmuzpgpquwec.supabase.co';
     const supabaseKey = 'sb_secret_cYvzi8CeyE7q6ZY7BERLYA_fu1R0opZ';
-    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+    
+    // Using supabaseClient to avoid conflict with the global supabase variable
+    const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
     const photoInput = document.getElementById('photoInput');
     const videoInput = document.getElementById('videoInput');
@@ -211,15 +213,15 @@
 
     async function init() {
       // NOTE: If you are not logging users in yet, this auth check will fail. 
-      // You will need to build a login screen for the daily limit to work.
-      const { data: { user } } = await supabase.auth.getUser();
+      // You will need to build a login screen for the daily limit to work properly.
+      const { data: { user } } = await supabaseClient.auth.getUser();
       if (!user) {
         console.warn("User is not logged in. Auth is required to post.");
         statusText.innerText = "Please log in to snap.";
         return; 
       }
 
-      const { data: settings } = await supabase.from('app_settings').select('is_revealed').eq('id', 1).single();
+      const { data: settings } = await supabaseClient.from('app_settings').select('is_revealed').eq('id', 1).single();
 
       if (settings && settings.is_revealed) {
         shutterBtn.disabled = true;
@@ -231,7 +233,7 @@
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
-      const { count } = await supabase
+      const { count } = await supabaseClient
         .from('photos')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
@@ -288,23 +290,23 @@
       shutterBtn.disabled = true;
 
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await supabaseClient.auth.getUser();
         if(!user) throw new Error("Must be logged in");
         
         const ext = mediaType === 'video' ? 'mp4' : 'jpg'; 
         const fileName = `${user.id}-${Date.now()}.${ext}`;
         
-        const { data: uploadData, error: uploadError } = await supabase.storage
+        const { data: uploadData, error: uploadError } = await supabaseClient.storage
           .from('disposable_snaps')
           .upload(fileName, file);
 
         if (uploadError) throw uploadError;
 
-        const { data: publicUrlData } = supabase.storage
+        const { data: publicUrlData } = supabaseClient.storage
           .from('disposable_snaps')
           .getPublicUrl(fileName);
 
-        await supabase.from('photos').insert([
+        await supabaseClient.from('photos').insert([
           { 
             user_id: user.id, 
             image_url: publicUrlData.publicUrl,
@@ -331,7 +333,7 @@
     async function showGallery() {
       gallerySection.classList.remove('hidden');
       
-      const { data: vaultMedia, error } = await supabase
+      const { data: vaultMedia, error } = await supabaseClient
         .from('photos')
         .select('image_url, media_type, created_at')
         .order('created_at', { ascending: false });
