@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <!-- Forces iOS Safari to keep the status bars dark -->
+  <meta name="theme-color" content="#050505">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  
   <title>CABBIE CAM 📸</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -97,12 +102,31 @@
       transform: scale(0.85);
       transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
     }
+
+    .tag-input::placeholder {
+      color: rgba(255,255,255,0.3);
+    }
+
+    /* Retro Viewfinder Scanline */
+    .scanline {
+      width: 100%;
+      height: 6px;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.2), rgba(255,255,255,0));
+      position: absolute;
+      top: 0;
+      animation: scan 3s linear infinite;
+      z-index: 15;
+      pointer-events: none;
+    }
+    @keyframes scan {
+      0% { top: -10%; opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { top: 110%; opacity: 0; }
+    }
   </style>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
-
-  <!-- Full Screen Flash Overlay -->
-  <div id="flashOverlay" class="fixed inset-0 bg-white z-50 opacity-0 pointer-events-none transition-opacity duration-150"></div>
 
   <!-- Ambient Glows -->
   <div class="bg-glow-purple"></div>
@@ -125,7 +149,18 @@
       <!-- The Live Camera Feed -->
       <video id="cameraPreview" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
 
-      <!-- Grid Overlay Pattern -->
+      <!-- Viewfinder Flash (Trapped inside the viewfinder to fix Safari bug!) -->
+      <div id="flashOverlay" class="absolute inset-0 bg-white z-50 opacity-0 pointer-events-none transition-opacity duration-[50ms]"></div>
+
+      <!-- Camera Flip Button -->
+      <button id="flipCamBtn" class="absolute top-3 right-3 z-30 bg-black/50 p-2 rounded-full border border-white/20 backdrop-blur-md transition active:scale-90">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5 text-white">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+        </svg>
+      </button>
+
+      <!-- Retro Scanline & Grid -->
+      <div class="scanline"></div>
       <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] z-10 pointer-events-none"></div>
       
       <!-- Reticle -->
@@ -137,11 +172,14 @@
         <div id="recordingDot" class="w-1 h-1 bg-red-500 rounded-full shadow-[0_0_12px_rgba(239,68,68,1)] animate-pulse hidden"></div>
       </div>
       
-      <!-- Video Progress Bar (Visual feedback during 15s recording) -->
+      <!-- Video Progress Bar -->
       <div id="progressBar" class="absolute bottom-0 left-0 h-1.5 bg-red-500 z-20 w-0 transition-all duration-[15000ms] ease-linear"></div>
     </div>
     
-    <p id="statusText" class="mb-6 text-white/50 text-sm tracking-widest uppercase text-center px-4 font-bold h-5">Connecting to lens...</p>
+    <p id="statusText" class="mb-4 text-white/50 text-sm tracking-widest uppercase text-center px-4 font-bold h-5 transition-transform">Connecting to lens...</p>
+
+    <!-- Note Input -->
+    <input type="text" id="photoNote" maxlength="40" placeholder="Add a note... (optional)" class="tag-input w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 mb-6 text-sm text-center text-white focus:outline-none focus:border-purple-500/50 shadow-inner transition-colors">
 
     <!-- Shutter Button -->
     <button id="shutterBtn" class="shutter-pop w-24 h-24 bg-neutral-900 rounded-full border-2 border-white/10 shadow-[0_0_25px_rgba(168,85,247,0.3)] flex items-center justify-center mb-6 relative overflow-hidden group">
@@ -187,6 +225,8 @@
     const photoGrid = document.getElementById('photoGrid');
     const recordingDot = document.getElementById('recordingDot');
     const progressBar = document.getElementById('progressBar');
+    const flipCamBtn = document.getElementById('flipCamBtn');
+    const photoNote = document.getElementById('photoNote');
 
     const DAILY_LIMIT = 5;
     let currentMode = 'image';
@@ -195,6 +235,7 @@
     let recordedChunks = [];
     let isRecording = false;
     let recordingTimeout = null;
+    let currentFacingMode = 'environment'; 
 
     // --- Device ID Generator ---
     function getDeviceId() {
@@ -210,49 +251,108 @@
     }
     const deviceId = getDeviceId();
 
-    // --- Camera Initialization ---
+    // --- Fun Effects ---
+    function triggerHaptic() {
+      if (navigator.vibrate) navigator.vibrate(40);
+    }
+
+    function spawnEmojis() {
+      const emojis = ['📸', '✨', '🎞️', '💜'];
+      const main = document.querySelector('main');
+      
+      for(let i=0; i<4; i++) {
+        const el = document.createElement('div');
+        el.innerText = emojis[Math.floor(Math.random() * emojis.length)];
+        el.className = 'absolute text-3xl pointer-events-none z-50';
+        el.style.left = `calc(50% + ${(Math.random() - 0.5) * 80}px)`;
+        el.style.bottom = '110px';
+        el.style.transition = 'all 1s cubic-bezier(0.25, 1, 0.5, 1)';
+        el.style.transform = `translateY(0) scale(0.5) rotate(${Math.random() * 40 - 20}deg)`;
+        el.style.opacity = '1';
+        
+        main.appendChild(el);
+        
+        // Trigger float up animation
+        requestAnimationFrame(() => {
+          el.style.transform = `translateY(-${Math.random() * 150 + 100}px) scale(1.5) rotate(${Math.random() * 90 - 45}deg)`;
+          el.style.opacity = '0';
+        });
+        
+        setTimeout(() => el.remove(), 1000);
+      }
+    }
+
+    function bounceText(text) {
+      statusText.innerText = text;
+      statusText.style.transform = 'scale(1.1)';
+      setTimeout(() => statusText.style.transform = 'scale(1)', 150);
+    }
+
+    // --- Camera Initialization & Flipping ---
     async function startCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      
       try {
         stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "environment" }, // Prefer back camera
+          video: { facingMode: currentFacingMode },
           audio: true 
         });
         cameraPreview.srcObject = stream;
-        statusText.innerText = "Say Cheese ✨";
+        
+        if (currentFacingMode === 'user') {
+          cameraPreview.style.transform = 'scaleX(-1)';
+        } else {
+          cameraPreview.style.transform = 'scaleX(1)';
+        }
+        
+        bounceText(currentMode === 'image' ? "Say Cheese ✨" : "Ready for Video (Max 15s)");
       } catch (err) {
         console.error("Camera access error:", err);
-        statusText.innerText = "Camera permissions required!";
+        bounceText("Camera permissions required!");
         shutterBtn.disabled = true;
       }
     }
 
+    flipCamBtn.addEventListener('click', () => {
+      if(isRecording) return;
+      triggerHaptic();
+      currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      startCamera();
+    });
+
     // --- Mode Toggles ---
     modePhoto.addEventListener('click', () => {
-      if(isRecording) return; // Don't allow switch while recording
+      if(isRecording) return;
+      triggerHaptic();
       currentMode = 'image';
       modePhoto.classList.add('toggle-active');
       modePhoto.classList.remove('text-white/40');
       modeVideo.classList.remove('toggle-active');
       modeVideo.classList.add('text-white/40');
       shutterInner.classList.replace('from-red-900', 'from-neutral-700'); 
-      statusText.innerText = "Say Cheese ✨";
+      bounceText("Say Cheese ✨");
       recordingDot.classList.add('hidden');
     });
 
     modeVideo.addEventListener('click', () => {
+      if(isRecording) return;
+      triggerHaptic();
       currentMode = 'video';
       modeVideo.classList.add('toggle-active');
       modeVideo.classList.remove('text-white/40');
       modePhoto.classList.remove('toggle-active');
       modePhoto.classList.add('text-white/40');
       shutterInner.classList.replace('from-neutral-700', 'from-red-900'); 
-      statusText.innerText = "Ready for Video (Max 15s)";
+      bounceText("Ready for Video (Max 15s)");
       recordingDot.classList.remove('hidden');
     });
 
     // --- Media Capture & Upload ---
     shutterBtn.addEventListener('click', () => {
       if (shutterBtn.disabled) return;
+      triggerHaptic();
 
       if (currentMode === 'image') {
         capturePhoto();
@@ -263,38 +363,42 @@
     });
 
     function capturePhoto() {
-      // Trigger Flash
+      // Trigger new constrained flash
       const flash = document.getElementById('flashOverlay');
       if(flash) {
         flash.style.opacity = '1';
-        setTimeout(() => { flash.style.opacity = '0'; }, 150); 
+        setTimeout(() => { flash.style.opacity = '0'; }, 80); // Faster, punchier flash
       }
+      
+      spawnEmojis();
 
-      // Draw video frame to hidden canvas
       const canvas = document.createElement('canvas');
       canvas.width = cameraPreview.videoWidth;
       canvas.height = cameraPreview.videoHeight;
       const ctx = canvas.getContext('2d');
+      
+      if (currentFacingMode === 'user') {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
       ctx.drawImage(cameraPreview, 0, 0, canvas.width, canvas.height);
       
-      statusText.innerText = "Developing...";
+      bounceText("Developing... 🎞️");
       shutterBtn.disabled = true;
 
-      // Convert canvas to Blob and Upload
       canvas.toBlob((blob) => {
         const file = new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
-        uploadFileToSupabase(file, 'image');
+        uploadFileToSupabase(file, 'image', photoNote.value.trim());
       }, 'image/jpeg', 0.9);
     }
 
     function startRecording() {
       recordedChunks = [];
       try {
-        // Fallback mime types depending on browser support (iOS Safari vs Chrome)
         const mimeType = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
         mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
       } catch (e) {
-        mediaRecorder = new MediaRecorder(stream); // Let browser decide
+        mediaRecorder = new MediaRecorder(stream); 
       }
 
       mediaRecorder.ondataavailable = (e) => {
@@ -302,24 +406,22 @@
       };
 
       mediaRecorder.onstop = () => {
-        statusText.innerText = "Processing Video...";
+        bounceText("Processing Video... 📼");
         const blobType = recordedChunks[0]?.type || 'video/mp4';
         const blob = new Blob(recordedChunks, { type: blobType });
         const ext = blobType.includes('webm') ? 'webm' : 'mp4';
         const file = new File([blob], `video_${Date.now()}.${ext}`, { type: blobType });
         
-        uploadFileToSupabase(file, 'video');
+        uploadFileToSupabase(file, 'video', photoNote.value.trim());
       };
 
       mediaRecorder.start();
       isRecording = true;
       
-      // UI Updates
-      statusText.innerText = "Recording... Tap to stop";
+      bounceText("Recording... Tap to stop");
       shutterInner.classList.add('bg-red-600', 'animate-pulse');
-      progressBar.style.width = '100%'; // Starts the CSS transition
+      progressBar.style.width = '100%'; 
 
-      // Enforce 15-second maximum
       recordingTimeout = setTimeout(() => {
         if (isRecording) stopRecording();
       }, 15000);
@@ -332,15 +434,14 @@
       isRecording = false;
       clearTimeout(recordingTimeout);
       
-      // Reset UI
       shutterBtn.disabled = true;
       shutterInner.classList.remove('bg-red-600', 'animate-pulse');
       progressBar.style.width = '0px'; 
-      progressBar.style.transition = 'none'; // Snap back
+      progressBar.style.transition = 'none'; 
       setTimeout(() => { progressBar.style.transition = 'all 15000ms ease-linear'; }, 50);
     }
 
-    async function uploadFileToSupabase(file, mediaType) {
+    async function uploadFileToSupabase(file, mediaType, note) {
       try {
         const fileName = `${deviceId}-${Date.now()}-${file.name}`;
         
@@ -358,40 +459,43 @@
           { 
             user_id: deviceId, 
             image_url: publicUrlData.publicUrl,
-            media_type: mediaType
+            media_type: mediaType,
+            note: note
           }
         ]);
 
         if (insertError) throw insertError;
 
-        statusText.innerText = "Saved to the vault!";
+        bounceText("Saved to the vault! 🔒");
+        photoNote.value = ''; 
+        
         setTimeout(() => {
           shutterBtn.disabled = false;
-          statusText.innerText = currentMode === 'image' ? "Say Cheese ✨" : "Ready for Video (Max 15s)";
-          init(); // Refresh limits
+          bounceText(currentMode === 'image' ? "Say Cheese ✨" : "Ready for Video (Max 15s)");
+          init(); 
         }, 2000); 
 
       } catch (error) {
         console.error('Upload failed:', error);
-        statusText.innerText = "Error saving. Try again.";
+        bounceText("Error saving. Try again.");
         shutterBtn.disabled = false;
       }
     }
 
     // --- App Init ---
     async function init() {
-      // 1. Check if the vault is revealed
       const { data: settings } = await supabaseClient.from('app_settings').select('is_revealed').eq('id', 1).single();
 
       if (settings && settings.is_revealed) {
         shutterBtn.disabled = true;
-        statusText.innerText = "Camera locked. The vault is open!";
+        photoNote.disabled = true;
+        flipCamBtn.classList.add('hidden');
+        bounceText("Camera locked. The vault is open!");
         if(stream) stream.getTracks().forEach(track => track.stop()); 
         showGallery(); 
         return;
       }
 
-      // 2. Check daily limits
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
@@ -406,10 +510,11 @@
 
       if (shotsLeft <= 0) {
         shutterBtn.disabled = true;
-        statusText.innerText = "Out of film for today!";
+        photoNote.disabled = true;
+        flipCamBtn.classList.add('hidden');
+        bounceText("Out of film for today!");
         if(stream) stream.getTracks().forEach(track => track.stop());
       } else if (!stream) {
-        // Start camera if we have shots left and it isn't running yet
         startCamera();
       }
     }
@@ -420,7 +525,7 @@
       
       const { data: vaultMedia, error } = await supabaseClient
         .from('photos')
-        .select('image_url, media_type, created_at')
+        .select('image_url, media_type, created_at, note')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -430,31 +535,33 @@
 
       photoGrid.innerHTML = vaultMedia.map(media => {
         const dateStr = new Date(media.created_at).toLocaleDateString();
+        const noteHtml = media.note ? `<p class="text-sm font-bold text-white mb-1 tracking-wide">"${media.note}"</p>` : '';
         
         if (media.media_type === 'video') {
           return `
-            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl relative border border-white/5 bg-white/5">
+            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl relative border border-white/5 bg-white/5 flex flex-col items-center">
               <div class="absolute top-4 right-4 bg-red-500 w-2 h-2 rounded-full shadow-[0_0_8px_rgba(239,68,68,1)] z-10"></div>
-              <div class="film-overlay rounded-lg h-full">
+              <div class="film-overlay rounded-lg w-full mb-3">
                 <video src="${media.image_url}" class="w-full h-auto rounded-lg object-cover aspect-[3/4] bg-black/40 disposable-filter" autoplay loop muted playsinline></video>
               </div>
-              <p class="text-xs text-white/50 font-bold text-center mt-3 uppercase tracking-wider">${dateStr}</p>
+              ${noteHtml}
+              <p class="text-xs text-white/40 uppercase tracking-wider">${dateStr}</p>
             </div>
           `;
         } else {
           return `
-            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl border border-white/5 bg-white/5">
-              <div class="film-overlay rounded-lg h-full">
+            <div class="polaroid-scatter cursor-pointer glass-panel p-2 rounded-xl border border-white/5 bg-white/5 flex flex-col items-center">
+              <div class="film-overlay rounded-lg w-full mb-3">
                 <img src="${media.image_url}" class="w-full h-auto rounded-lg object-cover aspect-[3/4] bg-black/40 disposable-filter" loading="lazy" />
               </div>
-              <p class="text-xs text-white/50 font-bold text-center mt-3 uppercase tracking-wider">${dateStr}</p>
+              ${noteHtml}
+              <p class="text-xs text-white/40 uppercase tracking-wider">${dateStr}</p>
             </div>
           `;
         }
       }).join('');
     }
 
-    // Kick things off
     init();
   </script>
 </body>
